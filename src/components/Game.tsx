@@ -4,11 +4,11 @@ import { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import Matter from 'matter-js';
 
-const TEAM_SIZE = 3; // Number of players per team
-const GAME_DURATION = 120; // 2 minutes game time
-const WINNING_SCORE = 5; // First team to score 5 goals wins
-const POWERUP_DURATION = 10; // Power-up duration in seconds
-const POWERUP_SPAWN_INTERVAL = 15; // Spawn a new power-up every 15 seconds
+const TEAM_SIZE = 13;
+const GAME_DURATION = 120;
+const WINNING_SCORE = 5;
+const POWERUP_DURATION = 10;
+const POWERUP_SPAWN_INTERVAL = 15;
 
 enum GamePhase {
   START,
@@ -113,49 +113,66 @@ const Game = () => {
     };
   
     const endGame = () => {
-      setGamePhase(GamePhase.END);
-    };
+        setGamePhase(GamePhase.END);
+      };
+    
+      useEffect(() => {
+        if (gamePhase !== GamePhase.PLAYING) return;
+    
+        const newSocket = io();
+        setSocket(newSocket);
+    
+        const { Engine, Render, Runner, Bodies, Composite, Events, Body, Vector } = Matter;
+    
+        const engine = Engine.create({
+          gravity: { scale: 0, x: 0, y: 0 }
+        });
+        
+        const world = engine.world;
   
-    useEffect(() => {
-      if (gamePhase !== GamePhase.PLAYING) return;
+        const width = window.innerWidth;
+        const height = window.innerHeight;
   
-      const newSocket = io();
-      setSocket(newSocket);
+    const render = Render.create({
+      element: document.body,
+      engine: engine,
+      canvas: canvasRef.current!,
+      options: {
+        width: width,
+        height: height,
+        wireframes: false,
+        background: '#4CAF50',
+      },
+    });
   
-      const { Engine, Render, Runner, Bodies, Composite, Events, Body, Vector } = Matter;
-  
-      const engine = Engine.create({
-        gravity: { scale: 0, x: 0, y: 0 }
-      });
-      
-      const world = engine.world;
-  
-      const width = window.innerWidth;
-      const height = window.innerHeight;
-  
-      const render = Render.create({
-        element: document.body,
-        engine: engine,
-        canvas: canvasRef.current!,
-        options: {
-          width: width,
-          height: height,
-          wireframes: false,
-          background: '#4CAF50',
-        },
-      });
-  
-      Render.run(render);
-      const runner = Runner.create();
-      Runner.run(runner, engine);
+    Render.run(render);
+    const runner = Runner.create();
+    Runner.run(runner, engine);
+
+    // Load sound effects
+    const kickSound = new Audio('/sounds/kick.mp3');
+    const goalSound = new Audio('/sounds/goal.mp3');
+    const powerUpSound = new Audio('/sounds/powerup.mp3');
 
     // Field setup (walls, goals, markings)
     const wallThickness = 50;
     const walls = [
-      Bodies.rectangle(width / 2, -wallThickness / 2, width, wallThickness, { isStatic: true }),
-      Bodies.rectangle(width / 2, height + wallThickness / 2, width, wallThickness, { isStatic: true }),
-      Bodies.rectangle(-wallThickness / 2, height / 2, wallThickness, height, { isStatic: true }),
-      Bodies.rectangle(width + wallThickness / 2, height / 2, wallThickness, height, { isStatic: true }),
+      Bodies.rectangle(width / 2, -wallThickness / 2, width, wallThickness, { 
+        isStatic: true,
+        render: { fillStyle: '#2E7D32' }  // Darker green for walls
+      }),
+      Bodies.rectangle(width / 2, height + wallThickness / 2, width, wallThickness, { 
+        isStatic: true,
+        render: { fillStyle: '#2E7D32' }
+      }),
+      Bodies.rectangle(-wallThickness / 2, height / 2, wallThickness, height, { 
+        isStatic: true,
+        render: { fillStyle: '#2E7D32' }
+      }),
+      Bodies.rectangle(width + wallThickness / 2, height / 2, wallThickness, height, { 
+        isStatic: true,
+        render: { fillStyle: '#2E7D32' }
+      }),
     ];
 
     const goalWidth = 20;
@@ -176,7 +193,7 @@ const Game = () => {
       centerCircle: { x: width / 2, y: height / 2, radius: 50 }
     };
 
-    // Create teams with adjusted physics properties
+    // Create teams with improved visuals
     const createPlayer = (x: number, y: number, color: string) => {
       return Bodies.circle(x, y, 20, {
         restitution: 0.5,
@@ -185,16 +202,21 @@ const Game = () => {
         density: 0.001,
         inertia: Infinity,
         inverseInertia: 0,
-        render: { fillStyle: color }
+        render: { 
+          fillStyle: color,
+          strokeStyle: 'black',
+          lineWidth: 2
+        }
       });
     };
 
+
     const team1 = Array.from({ length: TEAM_SIZE }, (_, i) => 
-      createPlayer(width / 4, (i + 1) * height / (TEAM_SIZE + 1), 'red')
+      createPlayer(width / 4, (i + 1) * height / (TEAM_SIZE + 1), '#FF4136')  // Brighter red
     );
 
     const team2 = Array.from({ length: TEAM_SIZE }, (_, i) => 
-      createPlayer(3 * width / 4, (i + 1) * height / (TEAM_SIZE + 1), 'blue')
+      createPlayer(3 * width / 4, (i + 1) * height / (TEAM_SIZE + 1), '#0074D9')  // Brighter blue
     );
 
     const ball = Bodies.circle(width / 2, height / 2, 15, {
@@ -202,7 +224,11 @@ const Game = () => {
       friction: 0.1,
       frictionAir: 0.005,
       density: 0.0005,
-      render: { fillStyle: 'white' }
+      render: { 
+        fillStyle: 'white',
+        strokeStyle: 'black',
+        lineWidth: 2
+      }
     });
 
     Composite.add(world, [...team1, ...team2, ball, ...walls, leftGoal, rightGoal]);
@@ -212,18 +238,22 @@ const Game = () => {
     let playerPowerUp: PowerUpType | null = null;
     let powerUpTimeLeft = 0;
 
-    // Create a power-up
+    // Create a power-up with improved visuals
     const createPowerUp = (): PowerUp => {
       const type = Math.floor(Math.random() * 3) as PowerUpType;
       const x = Math.random() * (width - 100) + 50;
       const y = Math.random() * (height - 100) + 50;
-      const color = type === PowerUpType.SPEED_BOOST ? 'yellow' : 
-                    type === PowerUpType.SUPER_KICK ? 'orange' : 'purple';
+      const color = type === PowerUpType.SPEED_BOOST ? '#FFDC00' : 
+                    type === PowerUpType.SUPER_KICK ? '#FF851B' : '#B10DC9';
       
       const body = Bodies.circle(x, y, 15, {
         isStatic: true,
         isSensor: true,
-        render: { fillStyle: color }
+        render: { 
+          fillStyle: color,
+          strokeStyle: 'white',
+          lineWidth: 2
+        }
       });
 
       return { type, body };
@@ -259,30 +289,32 @@ const Game = () => {
 
     // Unified movement function for both player and AI
     const movePlayer = (player: Matter.Body, direction: Matter.Vector) => {
-      const baseSpeed = 5;
-      const speed = player === team1[0] && playerPowerUp === PowerUpType.SPEED_BOOST ? baseSpeed * 1.5 : baseSpeed;
-      const velocity = Vector.mult(Vector.normalise(direction), speed);
-      Body.setVelocity(player, velocity);
-    };
-
-    // Ball kicking
-    const kickBall = (kicker: Matter.Body, ball: Matter.Body) => {
-      const baseKickForce = 0.03;
-      const kickForce = kicker === team1[0] && playerPowerUp === PowerUpType.SUPER_KICK ? baseKickForce * 2 : baseKickForce;
-      const distance = Vector.magnitude(Vector.sub(ball.position, kicker.position));
-      const kickRange = 50;
-
-      if (distance < kickRange) {
-        const direction = Vector.normalise(Vector.sub(ball.position, kicker.position));
-        const force = Vector.mult(direction, kickForce);
-        Body.applyForce(ball, ball.position, force);
-        
-        newSocket.emit('kick', {
-          ballPosition: ball.position,
-          ballVelocity: ball.velocity,
-        });
-      }
-    };
+        const baseSpeed = 5;
+        const speed = player === team1[0] && playerPowerUp === PowerUpType.SPEED_BOOST ? baseSpeed * 1.5 : baseSpeed;
+        const velocity = Vector.mult(Vector.normalise(direction), speed);
+        Body.setVelocity(player, velocity);
+      };
+  
+      // Ball kicking with sound effect
+      const kickBall = (kicker: Matter.Body, ball: Matter.Body) => {
+        const baseKickForce = 0.03;
+        const kickForce = kicker === team1[0] && playerPowerUp === PowerUpType.SUPER_KICK ? baseKickForce * 2 : baseKickForce;
+        const distance = Vector.magnitude(Vector.sub(ball.position, kicker.position));
+        const kickRange = 50;
+  
+        if (distance < kickRange) {
+          const direction = Vector.normalise(Vector.sub(ball.position, kicker.position));
+          const force = Vector.mult(direction, kickForce);
+          Body.applyForce(ball, ball.position, force);
+          
+          kickSound.play();
+          
+          newSocket.emit('kick', {
+            ballPosition: ball.position,
+            ballVelocity: ball.velocity,
+          });
+        }
+      };
 
     // Handle spacebar for kicking
     const handleSpacebar = (event: KeyboardEvent) => {
@@ -325,6 +357,7 @@ const Game = () => {
           playerPowerUp = powerUp.type;
           powerUpTimeLeft = POWERUP_DURATION;
           Composite.remove(world, powerUp.body);
+          powerUpSound.play();
           return false;
         }
         return true;
@@ -382,21 +415,35 @@ const Game = () => {
       }
     });
 
-    // Scoring and reset
+    // Scoring and reset with sound effect and visual feedback
     Events.on(engine, 'collisionStart', (event) => {
-      event.pairs.forEach((pair) => {
-        if (pair.bodyA === ball || pair.bodyB === ball) {
-          const goal = pair.bodyA === ball ? pair.bodyB : pair.bodyA;
-          if (goal === leftGoal) {
-            setScore(prev => ({ ...prev, player2: prev.player2 + 1 }));
-            resetPositions();
-          } else if (goal === rightGoal) {
-            setScore(prev => ({ ...prev, player1: prev.player1 + 1 }));
-            resetPositions();
+        event.pairs.forEach((pair) => {
+          if (pair.bodyA === ball || pair.bodyB === ball) {
+            const goal = pair.bodyA === ball ? pair.bodyB : pair.bodyA;
+            if (goal === leftGoal || goal === rightGoal) {
+              goalSound.play();
+              
+              // Visual feedback for goal
+              const goalFlash = Bodies.rectangle(width / 2, height / 2, width, height, {
+                isStatic: true,
+                isSensor: true,
+                render: {
+                  fillStyle: 'rgba(255, 255, 255, 0.5)'
+                }
+              });
+              Composite.add(world, goalFlash);
+              setTimeout(() => Composite.remove(world, goalFlash), 500);
+  
+              if (goal === leftGoal) {
+                setScore(prev => ({ ...prev, player2: prev.player2 + 1 }));
+              } else {
+                setScore(prev => ({ ...prev, player1: prev.player1 + 1 }));
+              }
+              resetPositions();
+            }
           }
-        }
+        });
       });
-    });
 
     const resetPositions = () => {
       Body.setPosition(ball, { x: width / 2, y: height / 2 });
@@ -412,11 +459,12 @@ const Game = () => {
     };
 
     // Custom render function for field markings
-    Events.on(render, 'afterRender', () => {
+ Events.on(render, 'afterRender', () => {
       const ctx = render.context;
-      ctx.strokeStyle = 'white';
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
       ctx.lineWidth = 2;
       
+      // Draw field markings
       ctx.beginPath();
       ctx.moveTo(fieldMarkings.centerLine.x, 0);
       ctx.lineTo(fieldMarkings.centerLine.x, height);
@@ -429,9 +477,18 @@ const Game = () => {
       // Draw power-up timer
       if (playerPowerUp !== null) {
         ctx.fillStyle = 'white';
-        ctx.font = '16px Arial';
+        ctx.font = 'bold 16px Arial';
         ctx.fillText(`Power-up: ${PowerUpType[playerPowerUp]} (${Math.ceil(powerUpTimeLeft)}s)`, 10, height - 10);
       }
+
+      // Draw player indicator
+      ctx.fillStyle = '#FF4136';
+      ctx.beginPath();
+      ctx.moveTo(team1[0].position.x, team1[0].position.y - 30);
+      ctx.lineTo(team1[0].position.x - 10, team1[0].position.y - 40);
+      ctx.lineTo(team1[0].position.x + 10, team1[0].position.y - 40);
+      ctx.closePath();
+      ctx.fill();
     });
 
     // Game timer
