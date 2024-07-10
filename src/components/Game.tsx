@@ -7,12 +7,26 @@ import Matter from 'matter-js';
 const TEAM_SIZE = 3; // Number of players per team
 const GAME_DURATION = 120; // 2 minutes game time
 const WINNING_SCORE = 5; // First team to score 5 goals wins
+const POWERUP_DURATION = 10; // Power-up duration in seconds
+const POWERUP_SPAWN_INTERVAL = 15; // Spawn a new power-up every 15 seconds
 
 enum GamePhase {
   START,
   PLAYING,
   END
 }
+
+enum PowerUpType {
+  SPEED_BOOST,
+  SUPER_KICK,
+  MAGNET_BALL
+}
+
+interface PowerUp {
+  type: PowerUpType;
+  body: Matter.Body;
+}
+
 
 const StartScreen = ({ onStart }: { onStart: () => void }) => (
   <div style={{
@@ -193,6 +207,38 @@ const Game = () => {
 
     Composite.add(world, [...team1, ...team2, ball, ...walls, leftGoal, rightGoal]);
 
+    // Power-up related variables
+    let activePowerUps: PowerUp[] = [];
+    let playerPowerUp: PowerUpType | null = null;
+    let powerUpTimeLeft = 0;
+
+    // Create a power-up
+    const createPowerUp = (): PowerUp => {
+      const type = Math.floor(Math.random() * 3) as PowerUpType;
+      const x = Math.random() * (width - 100) + 50;
+      const y = Math.random() * (height - 100) + 50;
+      const color = type === PowerUpType.SPEED_BOOST ? 'yellow' : 
+                    type === PowerUpType.SUPER_KICK ? 'orange' : 'purple';
+      
+      const body = Bodies.circle(x, y, 15, {
+        isStatic: true,
+        isSensor: true,
+        render: { fillStyle: color }
+      });
+
+      return { type, body };
+    };
+
+    // Spawn power-ups
+    const spawnPowerUp = () => {
+      const powerUp = createPowerUp();
+      activePowerUps.push(powerUp);
+      Composite.add(world, powerUp.body);
+    };
+
+    // Set up power-up spawning interval
+    const powerUpInterval = setInterval(spawnPowerUp, POWERUP_SPAWN_INTERVAL * 1000);
+
     // Player controls
     const keys = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
 
@@ -213,14 +259,16 @@ const Game = () => {
 
     // Unified movement function for both player and AI
     const movePlayer = (player: Matter.Body, direction: Matter.Vector) => {
-      const speed = 5; // Adjust this value to change the movement speed
+      const baseSpeed = 5;
+      const speed = player === team1[0] && playerPowerUp === PowerUpType.SPEED_BOOST ? baseSpeed * 1.5 : baseSpeed;
       const velocity = Vector.mult(Vector.normalise(direction), speed);
       Body.setVelocity(player, velocity);
     };
 
     // Ball kicking
     const kickBall = (kicker: Matter.Body, ball: Matter.Body) => {
-      const kickForce = 0.03;
+      const baseKickForce = 0.03;
+      const kickForce = kicker === team1[0] && playerPowerUp === PowerUpType.SUPER_KICK ? baseKickForce * 2 : baseKickForce;
       const distance = Vector.magnitude(Vector.sub(ball.position, kicker.position));
       const kickRange = 50;
 
@@ -259,6 +307,37 @@ const Game = () => {
         Body.setVelocity(team1[0], { x: 0, y: 0 });
       }
 
+      // Apply magnet ball effect
+      if (playerPowerUp === PowerUpType.MAGNET_BALL) {
+        const player = team1[0];
+        const toBall = Vector.sub(ball.position, player.position);
+        const distance = Vector.magnitude(toBall);
+        if (distance < 200) {
+          const force = Vector.mult(Vector.normalise(toBall), -0.001 * (200 - distance));
+          Body.applyForce(ball, ball.position, force);
+        }
+      }
+
+      // Check for power-up collisions
+      activePowerUps = activePowerUps.filter(powerUp => {
+        const collision = Matter.Collision.collides(team1[0], powerUp.body);
+        if (collision) {
+          playerPowerUp = powerUp.type;
+          powerUpTimeLeft = POWERUP_DURATION;
+          Composite.remove(world, powerUp.body);
+          return false;
+        }
+        return true;
+      });
+
+      // Update power-up timer
+      if (powerUpTimeLeft > 0) {
+        powerUpTimeLeft -= 1 / 60; // Assuming 60 FPS
+        if (powerUpTimeLeft <= 0) {
+          playerPowerUp = null;
+        }
+      }
+
       // AI movement
       const moveAI = (team: Matter.Body[], opposingGoal: Matter.Body) => {
         team.forEach((player) => {
@@ -276,7 +355,7 @@ const Game = () => {
         });
       };
 
-      moveAI(team2.slice(1), leftGoal); // Move AI team
+      moveAI(team2, leftGoal); // Move AI team
       moveAI(team1.slice(1), rightGoal); // Move AI teammates
 
       // Keep the ball within the field
@@ -346,6 +425,13 @@ const Game = () => {
       ctx.beginPath();
       ctx.arc(fieldMarkings.centerCircle.x, fieldMarkings.centerCircle.y, fieldMarkings.centerCircle.radius, 0, 2 * Math.PI);
       ctx.stroke();
+
+      // Draw power-up timer
+      if (playerPowerUp !== null) {
+        ctx.fillStyle = 'white';
+        ctx.font = '16px Arial';
+        ctx.fillText(`Power-up: ${PowerUpType[playerPowerUp]} (${Math.ceil(powerUpTimeLeft)}s)`, 10, height - 10);
+      }
     });
 
     // Game timer
@@ -353,6 +439,7 @@ const Game = () => {
       setTimeLeft((prev) => {
         if (prev <= 0 || Math.max(score.player1, score.player2) >= WINNING_SCORE) {
           clearInterval(gameInterval);
+          clearInterval(powerUpInterval);
           endGame();
           return 0;
         }
@@ -363,6 +450,7 @@ const Game = () => {
     // Cleanup
     return () => {
       clearInterval(gameInterval);
+      clearInterval(powerUpInterval);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('keydown', handleSpacebar);
@@ -373,7 +461,6 @@ const Game = () => {
       Engine.clear(engine);
     };
   }, [gamePhase]);
-
   return (
     <>
       <canvas ref={canvasRef} style={{ position: 'absolute', top: 0, left: 0 }} />
